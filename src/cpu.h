@@ -383,66 +383,63 @@ static void decode_modrm_seg_reg(uint8_t modrm, std::unique_ptr<Operand>& dst,
 std::unique_ptr<Instruction> decode(std::vector<uint8_t>& buffer)
 {
     auto opcode = buffer.at(0);
+    std::unique_ptr<Operand> dst = nullptr;
+    std::unique_ptr<Operand> src = nullptr;
+    std::unique_ptr<Instruction> result = nullptr;
 
     switch (opcode) {
     case 0x07: { // POP
         auto seg = std::make_unique<SegmentOperand>(0);
-        return std::make_unique<PopInstruction>(1, std::move(seg));
+        result.reset(new PopInstruction(1, std::move(seg)));
     } break;
 
     case 0x16: { // PUSH
         auto seg = std::make_unique<SegmentOperand>(2);
-        return std::make_unique<PushInstruction>(1, std::move(seg));
+        result.reset(new PushInstruction(1, std::move(seg)));
     } break;
 
     case 0x33: {
         uint8_t modrm = buffer.at(1);
-        std::unique_ptr<Operand> dst = nullptr;
-        std::unique_ptr<Operand> src = nullptr;
         decode_modrm_regs(modrm, dst, src);
-        return std::make_unique<XorInstruction>(2, std::move(dst), std::move(src));
+        result.reset(new XorInstruction(2, std::move(dst), std::move(src)));
     } break;
 
     case 0x50: { // PUSH AX
         auto srcIdx = opcode - 0x50;
-        std::unique_ptr<Operand> src(new RegisterOperand(2, srcIdx));
-        return std::make_unique<PushInstruction>(1, std::move(src));
+        src.reset(new RegisterOperand(2, srcIdx));
+        result.reset(new PushInstruction(1, std::move(src)));
     } break;
 
 
     case 0x8b: {
         uint8_t modrm = buffer.at(1);
-        std::unique_ptr<Operand> dst = nullptr;
-        std::unique_ptr<Operand> src = nullptr;
         decode_modrm_regs(modrm, dst, src);
-        return std::make_unique<MovInstruction>(2, std::move(dst), std::move(src));
+        result.reset(new MovInstruction(2, std::move(dst), std::move(src)));
     };
 
     case 0x8e: { // MOV Sreg, /r
         uint8_t modrm = buffer.at(1);
-        std::unique_ptr<Operand> dst = nullptr;
-        std::unique_ptr<Operand> src = nullptr;
         decode_modrm_seg_reg(modrm, dst, src);
-        return std::make_unique<MovInstruction>(2, std::move(dst), std::move(src));
+        result.reset(new MovInstruction(2, std::move(dst), std::move(src)));
     } break;
 
     case 0xbb: // MOV reg, imm
     case 0xbc: {
         auto dstIdx = opcode - 0xb8;
-        std::unique_ptr<Operand> dst(new RegisterOperand(2, dstIdx));
+        dst.reset(new RegisterOperand(2, dstIdx));
         uint16_t imm = 0x0;
         std::copy(buffer.begin() + 1, buffer.begin() + 3, reinterpret_cast<uint8_t *>(&imm));
-        std::unique_ptr<Operand> src(new ImmediateOperand<uint16_t>(imm)); 
-        return std::make_unique<MovInstruction>(3, std::move(dst), std::move(src));
+        src.reset(new ImmediateOperand<uint16_t>(imm)); 
+        result.reset(new MovInstruction(3, std::move(dst), std::move(src)));
     } break;
 
     case 0xeb: {
         auto disp = static_cast<int8_t>(buffer.at(1));
-        return std::make_unique<JmpInstruction>(2, disp);
+        result.reset(new JmpInstruction(2, disp));
     } break;
 
     case 0xfa: { // CLI
-        return std::make_unique<CliInstruction>();
+        result.reset(new CliInstruction);
     } break;
 
     default: {
@@ -450,6 +447,8 @@ std::unique_ptr<Instruction> decode(std::vector<uint8_t>& buffer)
     } break;
 
     }
+
+    return std::move(result);
 }
 
 class X86Cpu
