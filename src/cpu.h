@@ -10,6 +10,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include "ram.h"
+
 template<typename T>
 T countSetBits(T val)
 {
@@ -20,42 +22,6 @@ T countSetBits(T val)
     }
     return count;
 }
-
-
-class RAM
-{
-public:
-    RAM() : data(65535, 0x0)
-    {
-    }
-
-    const std::vector<uint8_t> read(uint16_t segment, uint16_t offset,
-                                    uint16_t size) const
-    {
-        auto index = index_from_segment_and_offset(segment, offset);
-        std::cout << "Read from 0x" << std::hex << index << "\n";
-        auto begin = data.begin() + index;
-        auto end = begin + size;
-        std::vector<uint8_t> result(begin, end);
-        return result;
-    }
-
-    void write(uint16_t segment, uint16_t offset,
-               const std::vector<uint8_t>& buf)
-    {
-        auto index = index_from_segment_and_offset(segment, offset);
-        std::cout << "Write to 0x" << std::hex << index << "\n";
-        std::copy(buf.begin(), buf.end(), data.begin() + index);
-    }
-
-private:
-    size_t index_from_segment_and_offset(uint16_t segment, uint16_t offset) const
-    {
-        return segment * 16 + offset;
-    }
-
-    std::vector<uint8_t> data;
-};
 
 using X86Reg = uint16_t;
 using X86Seg = uint16_t;
@@ -369,6 +335,51 @@ private:
     int8_t displacement;
 };
 
+static void decode_modrm_regs(uint8_t modrm, std::unique_ptr<Operand>& dst,
+                              std::unique_ptr<Operand>& src)
+{
+    switch (mod(modrm)) {
+    case 0b11: {
+        auto dstIdx = reg(modrm);
+        auto srcIdx = rm(modrm);
+        dst.reset(new RegisterOperand(2, dstIdx));
+        src.reset(new RegisterOperand(2, srcIdx));
+    } break;
+    default: {
+        throw std::runtime_error("addressing mode not implemented");
+    } break;
+    }
+
+    if (nullptr == dst) {
+        throw std::runtime_error("bad destination register");
+    } else if (nullptr == src) {
+        throw std::runtime_error("bad source register");
+    }
+}
+
+static void decode_modrm_seg_reg(uint8_t modrm, std::unique_ptr<Operand>& dst,
+                                 std::unique_ptr<Operand>& src)
+{
+    switch (mod(modrm)) {
+    case 0b11: {
+        auto dstIdx = reg(modrm);
+        auto srcIdx = rm(modrm);
+        dst.reset(new SegmentOperand(dstIdx));
+        src.reset(new RegisterOperand(2, srcIdx)); 
+    } break;
+    default: {
+        throw std::runtime_error("addressing mode not implemented");
+    } break;
+    }
+
+    if (nullptr == dst) {
+        throw std::runtime_error("bad destination segment");
+    } else if (nullptr == src) {
+        throw std::runtime_error("bad source register");
+    }
+}
+
+
 std::unique_ptr<Instruction> decode(std::vector<uint8_t>& buffer)
 {
     auto opcode = buffer.at(0);
@@ -385,30 +396,10 @@ std::unique_ptr<Instruction> decode(std::vector<uint8_t>& buffer)
     } break;
 
     case 0x33: {
-
         uint8_t modrm = buffer.at(1);
-
         std::unique_ptr<Operand> dst = nullptr;
         std::unique_ptr<Operand> src = nullptr;
-
-        switch (mod(modrm)) {
-        case 0b11: {
-            auto dstIdx = reg(modrm);
-            auto srcIdx = rm(modrm);
-            dst.reset(new RegisterOperand(2, dstIdx));
-            src.reset(new RegisterOperand(2, srcIdx));
-        } break;
-        default: {
-            throw std::runtime_error("addressing mode not implemented");
-        } break;
-        }
-
-        if (nullptr == dst) {
-            throw std::runtime_error("bad destination register");
-        } else if (nullptr == src) {
-            throw std::runtime_error("bad source register");
-        }
-
+        decode_modrm_regs(modrm, dst, src);
         return std::make_unique<XorInstruction>(2, std::move(dst), std::move(src));
     } break;
 
@@ -420,57 +411,18 @@ std::unique_ptr<Instruction> decode(std::vector<uint8_t>& buffer)
 
 
     case 0x8b: {
-
         uint8_t modrm = buffer.at(1);
-
         std::unique_ptr<Operand> dst = nullptr;
         std::unique_ptr<Operand> src = nullptr;
-
-        switch (mod(modrm)) {
-        case 0b11: {
-            auto dstIdx = reg(modrm);
-            auto srcIdx = rm(modrm);
-            dst.reset(new RegisterOperand(2, dstIdx));
-            src.reset(new RegisterOperand(2, srcIdx));
-        } break;
-        default: {
-            throw std::runtime_error("addressing mode not implemented");
-        } break;
-        }
-
-        if (nullptr == dst) {
-            throw std::runtime_error("bad destination register");
-        } else if (nullptr == src) {
-            throw std::runtime_error("bad source register");
-        }
-
+        decode_modrm_regs(modrm, dst, src);
         return std::make_unique<MovInstruction>(2, std::move(dst), std::move(src));
     };
 
     case 0x8e: { // MOV Sreg, /r
         uint8_t modrm = buffer.at(1);
-
         std::unique_ptr<Operand> dst = nullptr;
         std::unique_ptr<Operand> src = nullptr;
-
-        switch (mod(modrm)) {
-        case 0b11: {
-            auto dstIdx = reg(modrm);
-            auto srcIdx = rm(modrm);
-            dst.reset(new SegmentOperand(dstIdx));
-            src.reset(new RegisterOperand(2, srcIdx)); 
-        } break;
-        default: {
-            throw std::runtime_error("addressing mode not implemented");
-        } break;
-        }
-
-        if (nullptr == dst) {
-            throw std::runtime_error("bad destination segment");
-        } else if (nullptr == src) {
-            throw std::runtime_error("bad source register");
-        }
-
+        decode_modrm_seg_reg(modrm, dst, src);
         return std::make_unique<MovInstruction>(2, std::move(dst), std::move(src));
     } break;
 
@@ -554,7 +506,5 @@ private:
     X86RegisterFile registerFile;
     RAM& ram;
 };
-
-
 
 #endif // X86EMU_CPU_H

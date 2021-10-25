@@ -1,4 +1,4 @@
 project(x86emu)
 
-add_executable(x86emu src/main.cpp)
+add_executable(x86emu src/main.cpp src/ram.cpp)
 
